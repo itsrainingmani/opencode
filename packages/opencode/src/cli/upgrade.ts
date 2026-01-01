@@ -21,5 +21,12 @@ export async function upgrade() {
   if (method === "unknown") return
   await Installation.upgrade(method, latest)
     .then(() => Bus.publish(Installation.Event.Updated, { version: latest }))
-    .catch(() => {})
+    .catch(async (err) => {
+      if (err instanceof Installation.ElevationRequiredError) {
+        await Bus.publish(Installation.Event.ElevationRequired, {
+          version: latest,
+          method: err.data.method,
+        })
+      }
+    })
 }

@@ -16,7 +16,7 @@ export const UpgradeCommand = {
         alias: "m",
         describe: "installation method to use",
         type: "string",
-        choices: ["curl", "npm", "pnpm", "bun", "brew"],
+        choices: ["curl", "npm", "pnpm", "bun", "brew", "choco", "scoop"],
       })
   },
   handler: async (args: { target?: string; method?: string }) => {
@@ -56,8 +56,14 @@ export const UpgradeCommand = {
     const err = await Installation.upgrade(method, target).catch((err) => err)
     if (err) {
       spinner.stop("Upgrade failed", 1)
-      if (err instanceof Installation.UpgradeFailedError) prompts.log.error(err.data.stderr)
-      else if (err instanceof Error) prompts.log.error(err.message)
+      if (err instanceof Installation.ElevationRequiredError) {
+        prompts.log.error("Chocolatey requires Administrator privileges to upgrade packages.")
+        prompts.log.info("Please run 'choco upgrade opencode' in an elevated terminal.")
+      } else if (err instanceof Installation.UpgradeFailedError) {
+        prompts.log.error(err.data.stderr)
+      } else if (err instanceof Error) {
+        prompts.log.error(err.message)
+      }
       prompts.outro("Done")
       return
     }

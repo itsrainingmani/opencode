@@ -575,6 +575,16 @@ function App() {
     })
   })
 
+  // @ts-expect-error - ElevationRequired event type will be added after SDK regeneration
+  sdk.event.on(Installation.Event.ElevationRequired.type, (evt: { properties: { version: string; method: string } }) => {
+    toast.show({
+      variant: "warning",
+      title: "Elevation Required",
+      message: `OpenCode v${evt.properties.version} is available. Run 'choco upgrade opencode' as Administrator to update.`,
+      duration: 10000,
+    })
+  })
+
   return (
     <box
       width={dimensions().width}

@@ -30,6 +30,13 @@ export namespace Installation {
         version: z.string(),
       }),
     ),
+    ElevationRequired: BusEvent.define(
+      "installation.elevation-required",
+      z.object({
+        version: z.string(),
+        method: z.string(),
+      }),
+    ),
   }
 
   export const Info = z
@@ -62,6 +69,14 @@ export namespace Installation {
     if (process.execPath.includes(path.join(".local", "bin"))) return "curl"
     const exec = process.execPath.toLowerCase()
 
+    if (process.platform === "win32") {
+      // Scoop typically installs to %USERPROFILE%\scoop\apps\opencode and the exe is shimmed to %USERPROFILE%\scoop\shims
+      // if (exec.includes(path.join("scoop", "shims").toLowerCase())) return "scoop"
+      // Chocolatey typically installs to C:\ProgramData\chocolatey\bin
+      // if (exec.includes(path.join("chocolatey", "bin").toLowerCase())) return "choco"
+      return "choco"
+    }
+
     const checks = [
       {
         name: "npm" as const,
@@ -83,6 +98,14 @@ export namespace Installation {
         name: "brew" as const,
         command: () => $`brew list --formula opencode`.throws(false).quiet().text(),
       },
+      {
+        name: "scoop" as const,
+        command: () => $`scoop list opencode`.throws(false).quiet().text(),
+      },
+      {
+        name: "choco" as const,
+        command: () => $`choco list --limit-output opencode`.throws(false).quiet().text(),
+      },
     ]
 
     checks.sort((a, b) => {
@@ -95,7 +118,16 @@ export namespace Installation {
 
     for (const check of checks) {
       const output = await check.command()
-      if (output.includes(check.name === "brew" ? "opencode" : "opencode-ai")) {
+      if (check.name === "brew" && output.includes("opencode")) {
+        return check.name
+      }
+      if (check.name === "scoop" && output.includes("opencode")) {
+        return check.name
+      }
+      if (check.name === "choco" && output.includes("opencode")) {
+        return check.name
+      }
+      if (output.includes("opencode-ai")) {
         return check.name
       }
     }
@@ -107,6 +139,13 @@ export namespace Installation {
     "UpgradeFailedError",
     z.object({
       stderr: z.string(),
+    }),
+  )
+
+  export const ElevationRequiredError = NamedError.create(
+    "ElevationRequiredError",
+    z.object({
+      method: z.string(),
     }),
   )
 
@@ -144,25 +183,72 @@ export namespace Installation {
         })
         break
       }
+      case "scoop":
+        cmd = $`scoop update opencode`
+        break
+      case "choco":
+        cmd = $`choco upgrade opencode --version=${target} -y --no-progress`
+        break
       default:
         throw new Error(`Unknown method: ${method}`)
     }
     const result = await cmd.quiet().throws(false)
+    if (result.exitCode !== 0) {
+      const stdout = result.stdout.toString("utf-8")
+      const stderr = result.stderr.toString("utf-8")
+      log.info("no-upgrade", {
+        method,
+        target,
+        stdout: result.stdout.toString(),
+        stderr: result.stderr.toString("utf8"),
+      })
+      // Chocolatey requires elevation for upgrades
+      if (
+        method === "choco" &&
+        (stdout.includes("Throwing error") || stdout.includes("not running from an elevated command shell"))
+      ) {
+        throw new ElevationRequiredError({ method })
+      }
+      throw new UpgradeFailedError({ stderr })
+    }
     log.info("upgraded", {
       method,
       target,
       stdout: result.stdout.toString(),
       stderr: result.stderr.toString(),
     })
-    if (result.exitCode !== 0)
-      throw new UpgradeFailedError({
-        stderr: result.stderr.toString("utf8"),
-      })
   }
 
   export const VERSION = typeof OPENCODE_VERSION === "string" ? OPENCODE_VERSION : "local"
   export const CHANNEL = typeof OPENCODE_CHANNEL === "string" ? OPENCODE_CHANNEL : "local"
   export const USER_AGENT = `opencode/${CHANNEL}/${VERSION}/${Flag.OPENCODE_CLIENT}`
+
+  async function getScoopLatestVersion(): Promise<string | undefined> {
+    const url = "https://raw.githubusercontent.com/ScoopInstaller/Extras/master/bucket/opencode.json"
+    try {
+      const res = await fetch(url)
+      if (!res.ok) return undefined
+      const manifest = (await res.json()) as { version?: string }
+      return manifest.version
+    } catch {
+      return undefined
+    }
+  }
+
+  async function getChocolateyLatestVersion(): Promise<string | undefined> {
+    const url =
+      "https://community.chocolatey.org/api/v2/Packages?$filter=Id%20eq%20%27opencode%27%20and%20IsLatestVersion&$select=Version"
+    try {
+      const res = await fetch(url, {
+        headers: { Accept: "application/json" },
+      })
+      if (!res.ok) return undefined
+      const data = (await res.json()) as { d?: { results?: Array<{ Version?: string }> } }
+      return data.d?.results?.[0]?.Version
+    } catch {
+      return undefined
+    }
+  }
 
   export async function latest(installMethod?: Method) {
     const detectedMethod = installMethod || (await method())
@@ -178,6 +264,15 @@ export namespace Installation {
           .then((data: any) => data.versions.stable)
       }
     }
+    if (detectedMethod === "scoop") {
+      const version = await getScoopLatestVersion()
+      if (version) return version
+    }
+
+    if (detectedMethod === "choco") {
+      const version = await getChocolateyLatestVersion()
+      if (version) return version
+    }
 
     if (detectedMethod === "npm" || detectedMethod === "bun" || detectedMethod === "pnpm") {
       const registry = await iife(async () => {
@@ -185,7 +280,8 @@ export namespace Installation {
         const reg = r || "https://registry.npmjs.org"
         return reg.endsWith("/") ? reg.slice(0, -1) : reg
       })
-      const channel = CHANNEL
+      // Fallback to "latest" when running in local dev mode
+      const channel = CHANNEL === "local" ? "latest" : CHANNEL
       return fetch(`${registry}/opencode-ai/${channel}`)
         .then((res) => {
           if (!res.ok) throw new Error(res.statusText)
