@@ -351,6 +351,7 @@ function App() {
       keybind: "agent_list",
       category: "Agent",
       onSelect: () => {
+        if (promptRef.current?.mode === "shell") return
         dialog.replace(() => <DialogAgent />)
       },
     },
@@ -369,6 +370,7 @@ function App() {
       category: "Agent",
       disabled: true,
       onSelect: () => {
+        if (promptRef.current?.mode === "shell") return
         local.agent.move(1)
       },
     },
@@ -378,6 +380,7 @@ function App() {
       keybind: "variant_cycle",
       category: "Agent",
       onSelect: () => {
+        if (promptRef.current?.mode === "shell") return
         local.model.variant.cycle()
       },
     },
@@ -388,6 +391,7 @@ function App() {
       category: "Agent",
       disabled: true,
       onSelect: () => {
+        if (promptRef.current?.mode === "shell") return
         local.agent.move(-1)
       },
     },

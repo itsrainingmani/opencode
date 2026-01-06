@@ -44,6 +44,7 @@ export type PromptProps = {
 export type PromptRef = {
   focused: boolean
   current: PromptInfo
+  mode: "normal" | "shell"
   set(prompt: PromptInfo): void
   reset(): void
   blur(): void
@@ -458,6 +459,9 @@ export function Prompt(props: PromptProps) {
     },
     get current() {
       return store.prompt
+    },
+    get mode() {
+      return store.mode
     },
     focus() {
       input.focus()
