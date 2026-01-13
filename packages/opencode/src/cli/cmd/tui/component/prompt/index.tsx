@@ -684,6 +684,83 @@ export function Prompt(props: PromptProps) {
     return
   }
 
+  function expandPastedTextAtCursor() {
+    const offset = input.cursorOffset
+    const allExtmarks = input.extmarks.getAllForTypeId(promptPartTypeId)
+
+    for (const extmark of allExtmarks) {
+      if (offset >= extmark.start && offset < extmark.end) {
+        const partIndex = store.extmarkToPartIndex.get(extmark.id)
+        if (partIndex !== undefined) {
+          const part = store.prompt.parts[partIndex]
+          if (part?.type === "text" && part.text) {
+            const currentText = input.plainText
+            const before = currentText.slice(0, extmark.start)
+            const after = currentText.slice(extmark.end)
+            const newText = before + part.text + after
+
+            const oldLen = extmark.end - extmark.start
+            const newLen = part.text.length
+            const delta = newLen - oldLen
+
+            // Update positions for parts that come after the expanded one
+            const updatedParts = store.prompt.parts
+              .filter((_, i) => i !== partIndex)
+              .map((p) => {
+                if (p.type === "file" && p.source?.text && p.source.text.start > extmark.start) {
+                  return {
+                    ...p,
+                    source: {
+                      ...p.source,
+                      text: {
+                        ...p.source.text,
+                        start: p.source.text.start + delta,
+                        end: p.source.text.end + delta,
+                      },
+                    },
+                  }
+                }
+                if (p.type === "agent" && p.source && p.source.start > extmark.start) {
+                  return {
+                    ...p,
+                    source: {
+                      ...p.source,
+                      start: p.source.start + delta,
+                      end: p.source.end + delta,
+                    },
+                  }
+                }
+                if (p.type === "text" && p.source?.text && p.source.text.start > extmark.start) {
+                  return {
+                    ...p,
+                    source: {
+                      ...p.source,
+                      text: {
+                        ...p.source.text,
+                        start: p.source.text.start + delta,
+                        end: p.source.text.end + delta,
+                      },
+                    },
+                  }
+                }
+                return p
+              })
+
+            input.setText(newText)
+            input.cursorOffset = extmark.start
+
+            setStore("prompt", {
+              input: newText,
+              parts: updatedParts,
+            })
+            restoreExtmarksFromParts(updatedParts)
+            return
+          }
+        }
+      }
+    }
+  }
+
   const highlight = createMemo(() => {
     if (keybind.leader) return theme.border
     if (store.mode === "shell") return theme.primary
@@ -926,6 +1003,7 @@ export function Prompt(props: PromptProps) {
                 }, 0)
               }}
               onMouseDown={(r: MouseEvent) => r.target?.focus()}
+              onMouseUp={() => expandPastedTextAtCursor()}
               focusedBackgroundColor={theme.backgroundElement}
               cursorColor={theme.text}
               syntaxStyle={syntax()}
